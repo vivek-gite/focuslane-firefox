@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>focuslane</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 380px;
+      max-height: 620px;
+      overflow-y: auto;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: #fff;
+      color: #17171c;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 18px;
+      border-bottom: 1px solid #eeeeF2;
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(10px);
+    }
+
+    .header img { width: 24px; height: 24px; border-radius: 6px; }
+    .brand { font-size: 14px; font-weight: 650; }
+    .version { margin-left: auto; color: #93939f; font-size: 11px; }
+
+    .main {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 14px 18px 18px;
+    }
+
+    .section {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      padding-top: 12px;
+      border-top: 1px solid #f0f0f2;
+    }
+
+    .section:first-child {
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #a1a1aa;
+    }
+
+    .status {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      border: 1px solid #f0f0f2;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #fafafa;
+    }
+
+    .status strong { font-size: 13px; }
+    .status span { color: #70707a; font-size: 11px; line-height: 1.35; }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .row-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .row-text strong {
+      font-size: 12px;
+      font-weight: 600;
+      color: #17171c;
+    }
+
+    .row-text span {
+      font-size: 10.5px;
+      color: #93939f;
+      line-height: 1.35;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    label {
+      font-size: 11px;
+      font-weight: 550;
+      color: #70707a;
+    }
+
+    select,
+    input[type="text"],
+    input[type="password"],
+    input[type="time"],
+    input[type="number"],
+    textarea {
+      width: 100%;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+      color: #17171c;
+      font: inherit;
+      font-size: 12px;
+      padding: 8px 10px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 58px;
+      resize: vertical;
+      line-height: 1.35;
+    }
+
+    select:focus,
+    input:focus,
+    textarea:focus {
+      border-color: #17171c;
+    }
+
+    .toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex: 0 0 auto;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+
+    .slider {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background: #d9d9dd;
+      cursor: pointer;
+      transition: background 0.16s ease;
+    }
+
+    .slider::before {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 3px;
+      top: 3px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+      transition: transform 0.16s ease;
+    }
+
+    .toggle input:checked + .slider {
+      background: #17171c;
+    }
+
+    .toggle input:checked + .slider::before {
+      transform: translateX(16px);
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 7px;
+    }
+
+    button {
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      background: #fff;
+      color: #17171c;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 8px 12px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+
+    button:hover {
+      border-color: #17171c;
+    }
+
+    .primary {
+      background: #17171c;
+      color: #fff;
+      border-color: #17171c;
+    }
+
+    .primary:hover { background: #303038; }
+    .grow { flex: 1; }
+
+    .hint {
+      color: #93939f;
+      font-size: 10.5px;
+      line-height: 1.35;
+    }
+
+    .status-line {
+      min-height: 14px;
+      color: #93939f;
+      font-size: 11px;
+    }
+
+    .status-line.error { color: #dc2626; }
+    .status-line.success { color: #16a34a; }
+
+    .days {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+    }
+
+    .day {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-size: 10px;
+      color: #70707a;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .day input { display: none; }
+    .day span {
+      width: 100%;
+      text-align: center;
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      padding: 5px 0;
+    }
+
+    .day input:checked + span {
+      background: #17171c;
+      color: #fff;
+      border-color: #17171c;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .stat {
+      border: 1px solid #f0f0f2;
+      border-radius: 8px;
+      padding: 8px;
+      background: #fafafa;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .stat span {
+      color: #93939f;
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.25px;
+      line-height: 1.25;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <img src="icons/icon48.png" alt="focuslane" />
+    <span class="brand">focuslane</span>
+    <span class="version">v2.0</span>
+  </div>
+
+  <main class="main">
+    <section class="section">
+      <div class="status">
+        <strong id="modeStatus">Loading...</strong>
+        <span id="detailStatus">Preparing focus controls.</span>
+      </div>
+
+      <div class="field">
+        <label for="focusMode">Focus mode</label>
+        <select id="focusMode">
+          <option value="minimal">Minimal - Shorts and comments</option>
+          <option value="study">Study - quiet watch pages</option>
+          <option value="strict">Strict - no open-ended browsing</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Quick Toggles</div>
+      <div id="toggleList"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Return YouTube Dislike</div>
+      <div class="row">
+        <div class="row-text">
+          <strong>Show dislike count</strong>
+          <span>Display estimated dislikes beside YouTube's dislike button.</span>
+        </div>
+        <label class="toggle">
+          <input id="dislikeCountEnabled" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <span class="hint">When enabled, the current YouTube video ID is sent to Return YouTube Dislike.</span>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Learning Stack</div>
+      <div class="row">
+        <div class="row-text">
+          <strong>Enable Learning Stack</strong>
+          <span>Queue videos to watch in focused learning sessions.</span>
+        </div>
+        <label class="toggle">
+          <input id="learningStackEnabled" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">AI Filter</div>
+      <div class="row">
+        <div class="row-text">
+          <strong>Use Groq title filtering</strong>
+          <span>Optional title-based filtering with your own API key.</span>
+        </div>
+        <label class="toggle">
+          <input id="filterEnabled" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="aiFilterRule">AI filter rule</label>
+        <textarea id="aiFilterRule" placeholder="Only show programming tutorials and tech reviews. Hide gaming, vlogs, and politics."></textarea>
+        <span class="hint">When enabled, video titles and this rule are sent to the focuslane backend for classification.</span>
+      </div>
+      <div class="btn-row">
+        <button id="clearCacheBtn" class="grow">Clear caches</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">SponsorBlock</div>
+      <div class="row">
+        <div class="row-text">
+          <strong>Skip sponsor segments</strong>
+          <span>Uses SponsorBlock's public API for the current video only.</span>
+        </div>
+        <label class="toggle">
+          <input id="sponsorBlockEnabled" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="sponsorSkipMode">Skip behavior</label>
+        <select id="sponsorSkipMode">
+          <option value="auto">Automatically skip</option>
+          <option value="ask">Ask before skipping</option>
+        </select>
+      </div>
+      <span class="hint">When enabled, the current YouTube video ID is sent to SponsorBlock to find sponsor timestamps.</span>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Schedule</div>
+      <div class="row">
+        <div class="row-text">
+          <strong>Focus hours</strong>
+          <span>Apply the selected mode only during these hours.</span>
+        </div>
+        <label class="toggle">
+          <input id="scheduleEnabled" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="grid">
+        <div class="field">
+          <label for="scheduleStart">Start</label>
+          <input id="scheduleStart" type="time" />
+        </div>
+        <div class="field">
+          <label for="scheduleEnd">End</label>
+          <input id="scheduleEnd" type="time" />
+        </div>
+      </div>
+      <div class="days" id="scheduleDays"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Pomodoro</div>
+      <div class="row">
+        <div class="row-text">
+          <strong>Focus and break timer</strong>
+          <span>Breaks relax advanced controls, not Shorts blocking.</span>
+        </div>
+        <label class="toggle">
+          <input id="pomodoroEnabled" type="checkbox" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="grid">
+        <div class="field">
+          <label for="pomodoroFocusMinutes">Focus</label>
+          <input id="pomodoroFocusMinutes" type="number" min="1" step="1" />
+        </div>
+        <div class="field">
+          <label for="pomodoroBreakMinutes">Break</label>
+          <input id="pomodoroBreakMinutes" type="number" min="1" step="1" />
+        </div>
+      </div>
+      <div class="btn-row">
+        <button id="startPomodoroBtn" class="grow">Start focus</button>
+        <button id="startBreakBtn" class="grow">Start break</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Temporary Unlock</div>
+      <div class="field">
+        <label for="unlockPhrase">Unlock phrase</label>
+        <input id="unlockPhrase" type="text" placeholder="Type FOCUS" />
+      </div>
+      <div class="btn-row">
+        <button data-unlock="5" class="unlock-btn grow">5 min</button>
+        <button data-unlock="15" class="unlock-btn grow">15 min</button>
+        <button data-unlock="30" class="unlock-btn grow">30 min</button>
+      </div>
+      <span class="hint" id="unlockStatus">No temporary unlock active.</span>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Stats</div>
+      <div class="btn-row">
+        <button class="period-btn primary grow" data-period="today">Today</button>
+        <button class="period-btn grow" data-period="week">Week</button>
+        <button class="period-btn grow" data-period="allTime">All</button>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><strong id="statShorts">0</strong><span>Shorts</span></div>
+        <div class="stat"><strong id="statRecs">0</strong><span>Recommendations</span></div>
+        <div class="stat"><strong id="statFiltered">0</strong><span>Filtered</span></div>
+        <div class="stat"><strong id="statSponsors">0</strong><span>Sponsors</span></div>
+        <div class="stat"><strong id="statFocus">0</strong><span>Focus min</span></div>
+        <div class="stat"><strong id="statUnlocks">0</strong><span>Unlocks</span></div>
+        <div class="stat"><strong id="statSaved">0</strong><span>Saved min</span></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">Save</div>
+      <div class="btn-row">
+        <button id="saveBtn" class="primary grow">Save settings</button>
+      </div>
+      <div class="status-line" id="saveStatus"></div>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
