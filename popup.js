@@ -317,12 +317,12 @@ function updateAiFilterRuleHint() {
   aiFilterRuleHint.className = "hint";
 
   if (!rule) {
-    aiFilterRuleHint.textContent = "Type at least 1 word to turn on title filtering automatically.";
+    aiFilterRuleHint.textContent = "Type at least 1 word to turn on video metadata filtering automatically.";
     return;
   }
 
   if (hasUsableAiFilterRule(rule)) {
-    aiFilterRuleHint.textContent = `Ready: ${wordCount} word${wordCount === 1 ? "" : "s"}. This rule will be saved and used for AI title filtering.`;
+    aiFilterRuleHint.textContent = `Ready: ${wordCount} word${wordCount === 1 ? "" : "s"}. This rule will be saved and used for AI video filtering.`;
     aiFilterRuleHint.classList.add("success");
     return;
   }
@@ -665,8 +665,9 @@ function renderAiFilteredVideos(videos) {
     const meta = document.createElement("div");
     meta.className = "filtered-video-meta";
     const time = formatFilteredVideoTime(video.timestamp);
+    const channel = String(video.channel || "").trim();
     const rule = String(video.filterRule || "").trim();
-    meta.textContent = [time, rule ? `Rule: ${rule}` : ""].filter(Boolean).join(" · ");
+    meta.textContent = [time, channel, rule ? `Rule: ${rule}` : ""].filter(Boolean).join(" · ");
 
     item.append(link, meta);
     aiFilteredVideoList.appendChild(item);

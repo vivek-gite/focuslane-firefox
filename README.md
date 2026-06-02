@@ -33,13 +33,13 @@ The popup exposes toggles for:
 - Hiding Explore, Trending, Gaming, Live, Playables, community posts, live chat, and notifications.
 - Forcing autoplay off.
 
-### AI Title Filtering
+### AI Video Filtering
 
-focuslane can classify YouTube video titles against a natural-language rule, such as:
+focuslane can classify YouTube video title, channel, and visible description metadata against a natural-language rule, such as:
 
 > Only show programming tutorials and tech reviews. Hide gaming, vlogs, and politics.
 
-When a usable rule is configured, matching title data is sent to the configured focuslane classification backend. Results are cached locally to reduce repeated classification requests.
+When a usable rule is configured, matching video metadata is sent to the configured focuslane classification backend. Results are cached locally to reduce repeated classification requests.
 
 AI filtering includes:
 
@@ -102,7 +102,7 @@ The extension declares no data collection in `manifest.json`:
 
 Some optional features call external services when enabled or used:
 
-- **AI filtering** sends video titles and the configured filter rule to `https://focuslane-api.kytehe.workers.dev/api/classify`.
+- **AI filtering** sends video title, channel, visible description metadata, and the configured filter rule to `https://focuslane-api.kytehe.workers.dev/api/classify`.
 - **SponsorBlock** sends the current YouTube video ID to `https://sponsor.ajay.app`.
 - **Return YouTube Dislike** sends the current YouTube video ID to `https://returnyoutubedislikeapi.com`.
 
@@ -258,7 +258,7 @@ Check that:
 
 - The AI filter rule has at least one word.
 - You clicked **Apply filter** or waited for auto-save.
-- YouTube has loaded video title cards on the current page.
+- YouTube has loaded video cards on the current page.
 - The AI backend is reachable.
 
 You can also clear caches from the popup and try again.

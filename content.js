@@ -225,6 +225,10 @@ function textIncludesAny(text, terms) {
   return terms.some((term) => normalized.includes(term));
 }
 
+function normalizeAiMetadataText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
 function sendStats(delta) {
   browser.runtime.sendMessage({ type: "INCREMENT_STATS", delta }).catch(() => {});
 }
@@ -232,7 +236,7 @@ function sendStats(delta) {
 function rememberAiFilteredVideos(videos, filterRule) {
   const payload = (Array.isArray(videos) ? videos : [])
     .filter((video) => video?.id && video?.title)
-    .map((video) => ({ id: video.id, title: video.title }));
+    .map((video) => ({ id: video.id, title: video.title, channel: video.channel || "" }));
   if (!payload.length) return;
   browser.runtime.sendMessage({
     type: "RECORD_AI_FILTERED_VIDEOS",
@@ -749,6 +753,27 @@ function extractChannel(el) {
   return "";
 }
 
+function extractDescription(el) {
+  const selectors = [
+    "#description-text",
+    "yt-formatted-string#description-text",
+    "yt-attributed-string#description-text",
+    "#metadata-snippet",
+    "#metadata-snippet-container",
+    "yt-formatted-string.metadata-snippet-text",
+    ".metadata-snippet-text",
+    ".yt-lockup-metadata-view-model-wiz__metadata"
+  ];
+  for (const selector of selectors) {
+    const descriptionEl = el.querySelector(selector);
+    if (descriptionEl) {
+      const text = normalizeAiMetadataText(descriptionEl.getAttribute("title") || descriptionEl.textContent || "");
+      if (text) return text;
+    }
+  }
+  return "";
+}
+
 function getLearningQueue() {
   return Array.isArray(runtimeState.learningSessionQueue) ? runtimeState.learningSessionQueue : [];
 }
@@ -1070,8 +1095,14 @@ function hasHiddenReason(el) {
   return Boolean(reasons && reasons.size > 0);
 }
 
-function getAiCacheKey(videoId, filterRule) {
-  return `${hashString(filterRule)}:${videoId}`;
+function getAiCacheKey(video, filterRule) {
+  const id = typeof video === "string" ? video : video?.id;
+  const metadataHash = typeof video === "string" ? "" : hashString([
+    normalizeAiMetadataText(video?.title),
+    normalizeAiMetadataText(video?.channel),
+    normalizeAiMetadataText(video?.description)
+  ].join("\n"));
+  return `${hashString(filterRule)}:${id}:${metadataHash}`;
 }
 
 function applyAiFilter(effective) {
@@ -1113,17 +1144,24 @@ function applyAiFilter(effective) {
     const id = extractVideoId(el);
     const title = extractTitle(el);
     if (!id || !title) return;
+    const video = {
+      id,
+      title,
+      channel: extractChannel(el),
+      description: extractDescription(el),
+      element: el
+    };
 
-    const cacheKey = getAiCacheKey(id, rule);
+    const cacheKey = getAiCacheKey(video, rule);
     if (classifiedVideos.has(cacheKey)) {
       if (classifiedVideos.get(cacheKey) === false && setHidden(el, "ai-filter", true)) {
         cachedHidden++;
-        cachedFilteredVideos.push({ id, title });
+        cachedFilteredVideos.push(video);
       }
       return;
     }
 
-    unclassified.push({ id, title, element: el });
+    unclassified.push(video);
   });
 
   if (cachedHidden > 0) {
@@ -1145,7 +1183,12 @@ async function classifyBatch(videos, filterRule) {
       try {
         const response = await browser.runtime.sendMessage({
           type: "CLASSIFY_VIDEOS",
-          titles: batch.map((video) => ({ id: video.id, title: video.title })),
+          titles: batch.map((video) => ({
+            id: video.id,
+            title: video.title,
+            channel: video.channel || "",
+            description: video.description || ""
+          })),
           filterRule
         });
 
@@ -1154,10 +1197,10 @@ async function classifyBatch(videos, filterRule) {
         const filteredVideos = [];
         for (const item of batch) {
           const relevant = response.results[item.id] === true;
-          classifiedVideos.set(getAiCacheKey(item.id, filterRule), relevant);
+          classifiedVideos.set(getAiCacheKey(item, filterRule), relevant);
           if (!relevant && item.element.isConnected && setHidden(item.element, "ai-filter", true)) {
             count++;
-            filteredVideos.push({ id: item.id, title: item.title });
+            filteredVideos.push(item);
           }
         }
         if (count > 0) {

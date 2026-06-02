@@ -1,7 +1,8 @@
 let blockingEnabled = true;
 
 const WORKER_URL = "https://focuslane-api.kytehe.workers.dev";
-const CACHE_PREFIX = "vc2_";
+const CACHE_PREFIX = "vc3_";
+const PREVIOUS_CACHE_PREFIX = "vc2_";
 const LEGACY_CACHE_PREFIX = "vc_";
 const SPONSOR_CACHE_PREFIX = "sb_";
 const DISLIKE_CACHE_PREFIX = "ryd_";
@@ -210,34 +211,53 @@ function hasUsableAiFilterRule(value) {
   return countWords(value) >= AI_FILTER_MIN_WORDS;
 }
 
-function cacheKey(videoId, filterRule) {
-  return `${CACHE_PREFIX}${hashString(filterRule)}_${videoId}`;
+function normalizeAiMetadataText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-async function getCachedResults(videoIds, filterRule) {
-  const keys = videoIds.map((id) => cacheKey(id, filterRule));
+function metadataHash(video) {
+  return hashString([
+    normalizeAiMetadataText(video?.title),
+    normalizeAiMetadataText(video?.channel),
+    normalizeAiMetadataText(video?.description)
+  ].join("\n"));
+}
+
+function cacheKey(video, filterRule) {
+  const id = typeof video === "string" ? video : video?.id;
+  const metadataPart = typeof video === "string" ? "" : `_${metadataHash(video)}`;
+  return `${CACHE_PREFIX}${hashString(filterRule)}_${id}${metadataPart}`;
+}
+
+async function getCachedResults(videos, filterRule) {
+  if (!videos.length) return { results: {}, uncachedVideos: [] };
+  const keys = videos.map((video) => cacheKey(video, filterRule));
   const cached = await browser.storage.local.get(keys);
   const results = {};
-  const uncachedIds = [];
+  const uncachedVideos = [];
   const now = Date.now();
 
-  for (const videoId of videoIds) {
-    const entry = cached[cacheKey(videoId, filterRule)];
+  for (const video of videos) {
+    const videoId = video.id;
+    const entry = cached[cacheKey(video, filterRule)];
     if (entry && now - entry.timestamp < CACHE_EXPIRY_MS) {
       results[videoId] = entry.relevant;
     } else {
-      uncachedIds.push(videoId);
+      uncachedVideos.push(video);
     }
   }
 
-  return { results, uncachedIds };
+  return { results, uncachedVideos };
 }
 
-async function cacheResults(classifications, filterRule) {
+async function cacheResults(classifications, videos, filterRule) {
   const toStore = {};
   const now = Date.now();
-  for (const [videoId, relevant] of Object.entries(classifications)) {
-    toStore[cacheKey(videoId, filterRule)] = { relevant, timestamp: now };
+  for (const video of videos) {
+    const relevant = classifications[video.id];
+    if (typeof relevant === "boolean") {
+      toStore[cacheKey(video, filterRule)] = { relevant, timestamp: now };
+    }
   }
   await browser.storage.local.set(toStore);
 }
@@ -267,23 +287,29 @@ async function handleClassifyVideos(message) {
     return { results: {}, error: null };
   }
 
-  const videoIds = titles.map((t) => t.id);
-  const { results: cachedResults, uncachedIds } = await getCachedResults(videoIds, filterRule);
+  const videos = titles
+    .filter((t) => t?.id)
+    .map((t) => ({
+      id: t.id,
+      title: t.title || "",
+      channel: t.channel || "",
+      description: t.description || ""
+    }));
+  const { results: cachedResults, uncachedVideos } = await getCachedResults(videos, filterRule);
 
-  if (uncachedIds.length === 0) {
+  if (uncachedVideos.length === 0) {
     return { results: cachedResults, error: null };
   }
 
-  const uncachedTitles = titles.filter((t) => uncachedIds.includes(t.id));
-  const apiResults = await classifyWithBackend(uncachedTitles, filterRule);
+  const apiResults = await classifyWithBackend(uncachedVideos, filterRule);
 
   if (apiResults === null) {
     const fallback = {};
-    for (const id of uncachedIds) fallback[id] = true;
+    for (const video of uncachedVideos) fallback[video.id] = true;
     return { results: Object.assign({}, cachedResults, fallback), error: "api_error" };
   }
 
-  await cacheResults(apiResults, filterRule);
+  await cacheResults(apiResults, uncachedVideos, filterRule);
   return { results: Object.assign({}, cachedResults, apiResults), error: null };
 }
 
@@ -291,6 +317,7 @@ async function handleClearCache() {
   const allStorage = await browser.storage.local.get(null);
   const cacheKeys = Object.keys(allStorage).filter(
     (key) => key.startsWith(CACHE_PREFIX) ||
+      key.startsWith(PREVIOUS_CACHE_PREFIX) ||
       key.startsWith(LEGACY_CACHE_PREFIX) ||
       key.startsWith(SPONSOR_CACHE_PREFIX) ||
       key.startsWith(DISLIKE_CACHE_PREFIX)
@@ -420,6 +447,7 @@ function normalizeFilteredVideo(item, timestamp) {
   return {
     id,
     title,
+    channel: String(item?.channel || "").trim(),
     url: `https://www.youtube.com/watch?v=${id}`,
     filterRule: String(item?.filterRule || "").trim(),
     timestamp
