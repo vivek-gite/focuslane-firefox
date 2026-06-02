@@ -35,7 +35,7 @@ The popup exposes toggles for:
 
 ### AI Video Filtering
 
-focuslane can classify YouTube video title, channel, and visible description metadata against a natural-language rule, such as:
+focuslane can classify YouTube video title, channel, visible description, and visible transcript-snippet metadata against a natural-language rule, such as:
 
 > Only show programming tutorials and tech reviews. Hide gaming, vlogs, and politics.
 
@@ -46,6 +46,9 @@ AI filtering includes:
 - Natural-language rule composer.
 - Rule validation.
 - Reusable rule history.
+- Confidence threshold tuning to reduce false positives.
+- Always-show and always-hide channel and keyword overrides.
+- Local feedback corrections from the AI-filtered video history.
 - Local cache clearing.
 - Stats for videos hidden by the AI filter.
 - A list of AI-filtered videos grouped by Today, Week, and All Time.
@@ -102,11 +105,11 @@ The extension declares no data collection in `manifest.json`:
 
 Some optional features call external services when enabled or used:
 
-- **AI filtering** sends video title, channel, visible description metadata, and the configured filter rule to `https://focuslane-api.kytehe.workers.dev/api/classify`.
+- **AI filtering** sends video title, channel, visible description, visible transcript snippets, the configured filter rule, and a small set of local feedback examples to `https://focuslane-api.kytehe.workers.dev/api/classify`.
 - **SponsorBlock** sends the current YouTube video ID to `https://sponsor.ajay.app`.
 - **Return YouTube Dislike** sends the current YouTube video ID to `https://returnyoutubedislikeapi.com`.
 
-These services are only needed for their corresponding features. Cache entries are stored locally and can be cleared from the popup.
+These services are only needed for their corresponding features. Cache entries, channel and keyword overrides, and feedback corrections are stored locally or in extension sync storage and can be cleared from the popup where applicable.
 
 ## Permissions
 

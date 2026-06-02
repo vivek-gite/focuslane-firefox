@@ -1,13 +1,17 @@
 let blockingEnabled = true;
 
 const WORKER_URL = "https://focuslane-api.kytehe.workers.dev";
-const CACHE_PREFIX = "vc3_";
+const CACHE_PREFIX = "vc4_";
 const PREVIOUS_CACHE_PREFIX = "vc2_";
+const METADATA_CACHE_PREFIX = "vc3_";
 const LEGACY_CACHE_PREFIX = "vc_";
 const SPONSOR_CACHE_PREFIX = "sb_";
 const DISLIKE_CACHE_PREFIX = "ryd_";
 const AI_FILTERED_VIDEOS_KEY = "aiFilteredVideos";
 const AI_FILTERED_VIDEOS_LIMIT = 100;
+const AI_USER_FEEDBACK_KEY = "aiUserFeedback";
+const AI_USER_FEEDBACK_LIMIT = 100;
+const AI_FEEDBACK_EXAMPLE_LIMIT = 8;
 const CACHE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 const SPONSOR_CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const DISLIKE_CACHE_EXPIRY_MS = 6 * 60 * 60 * 1000;
@@ -88,6 +92,11 @@ const DEFAULT_SYNC_SETTINGS = {
   dislikeCountEnabled: false,
   filterEnabled: false,
   aiFilterRule: "",
+  aiAllowChannels: "",
+  aiBlockChannels: "",
+  aiAllowKeywords: "",
+  aiBlockKeywords: "",
+  aiHideConfidenceThreshold: 0.75,
   sponsorBlockEnabled: false,
   sponsorSkipMode: "auto",
   scheduleEnabled: false,
@@ -215,76 +224,230 @@ function normalizeAiMetadataText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function parseList(value) {
+  return String(value || "")
+    .split(/[\n,]/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function aiMetadataText(video) {
+  return [
+    video?.title,
+    video?.channel,
+    video?.description,
+    video?.transcript
+  ].map(normalizeAiMetadataText).filter(Boolean).join(" ").toLowerCase();
+}
+
+function normalizeAiThreshold(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return DEFAULT_SYNC_SETTINGS.aiHideConfidenceThreshold;
+  return Math.max(0.5, Math.min(0.95, number));
+}
+
 function metadataHash(video) {
   return hashString([
     normalizeAiMetadataText(video?.title),
     normalizeAiMetadataText(video?.channel),
-    normalizeAiMetadataText(video?.description)
+    normalizeAiMetadataText(video?.description),
+    normalizeAiMetadataText(video?.transcript)
   ].join("\n"));
 }
 
-function cacheKey(video, filterRule) {
+function cacheKey(video, filterRule, preferenceSignature = "") {
   const id = typeof video === "string" ? video : video?.id;
   const metadataPart = typeof video === "string" ? "" : `_${metadataHash(video)}`;
-  return `${CACHE_PREFIX}${hashString(filterRule)}_${id}${metadataPart}`;
+  const preferencePart = preferenceSignature ? `_${preferenceSignature}` : "";
+  return `${CACHE_PREFIX}${hashString(filterRule)}_${id}${metadataPart}${preferencePart}`;
 }
 
-async function getCachedResults(videos, filterRule) {
-  if (!videos.length) return { results: {}, uncachedVideos: [] };
-  const keys = videos.map((video) => cacheKey(video, filterRule));
+function getPreferenceSignature(settings, feedbackVersion) {
+  return hashString(JSON.stringify({
+    allowChannels: settings.aiAllowChannels || "",
+    blockChannels: settings.aiBlockChannels || "",
+    allowKeywords: settings.aiAllowKeywords || "",
+    blockKeywords: settings.aiBlockKeywords || "",
+    threshold: normalizeAiThreshold(settings.aiHideConfidenceThreshold),
+    feedbackVersion: Number(feedbackVersion) || 0
+  }));
+}
+
+async function getCachedResults(videos, filterRule, preferenceSignature) {
+  if (!videos.length) return { results: {}, decisions: {}, uncachedVideos: [] };
+  const keys = videos.map((video) => cacheKey(video, filterRule, preferenceSignature));
   const cached = await browser.storage.local.get(keys);
   const results = {};
+  const decisions = {};
   const uncachedVideos = [];
   const now = Date.now();
 
   for (const video of videos) {
     const videoId = video.id;
-    const entry = cached[cacheKey(video, filterRule)];
+    const entry = cached[cacheKey(video, filterRule, preferenceSignature)];
     if (entry && now - entry.timestamp < CACHE_EXPIRY_MS) {
       results[videoId] = entry.relevant;
+      if (entry.decision) decisions[videoId] = entry.decision;
     } else {
       uncachedVideos.push(video);
     }
   }
 
-  return { results, uncachedVideos };
+  return { results, decisions, uncachedVideos };
 }
 
-async function cacheResults(classifications, videos, filterRule) {
+async function cacheResults(classifications, decisions, videos, filterRule, preferenceSignature) {
   const toStore = {};
   const now = Date.now();
   for (const video of videos) {
     const relevant = classifications[video.id];
     if (typeof relevant === "boolean") {
-      toStore[cacheKey(video, filterRule)] = { relevant, timestamp: now };
+      toStore[cacheKey(video, filterRule, preferenceSignature)] = {
+        relevant,
+        decision: decisions?.[video.id] || null,
+        timestamp: now
+      };
     }
   }
   await browser.storage.local.set(toStore);
 }
 
-async function classifyWithBackend(titles, filterRule) {
+async function classifyWithBackend(titles, filterRule, preferenceProfile) {
   try {
     const response = await fetch(`${WORKER_URL}/api/classify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ titles, filterRule })
+      body: JSON.stringify({ titles, filterRule, preferenceProfile })
     });
 
     if (!response.ok) return null;
 
     const data = await response.json();
     if (data.error) return null;
-    return data.results || null;
+    return {
+      results: data.results || null,
+      decisions: data.decisions || {}
+    };
   } catch (_err) {
     return null;
   }
+}
+
+function buildDecision(show, confidence, reason, source) {
+  return {
+    show: Boolean(show),
+    confidence: Math.max(0, Math.min(1, Number(confidence) || 0)),
+    reason: String(reason || "").slice(0, 240),
+    source: source || "ai"
+  };
+}
+
+function metadataContainsAny(video, terms) {
+  if (!terms.length) return "";
+  const text = aiMetadataText(video);
+  return terms.find((term) => text.includes(term)) || "";
+}
+
+function channelMatchesAny(video, terms) {
+  if (!terms.length) return "";
+  const channel = normalizeAiMetadataText(video?.channel).toLowerCase();
+  return terms.find((term) => channel && channel.includes(term)) || "";
+}
+
+function correctionMatches(video, filterRule, correction) {
+  if (!correction) return false;
+  const sameRule = hashString(correction.filterRule || "") === hashString(filterRule || "");
+  if (!sameRule) return false;
+  if (correction.id && correction.id === video.id) return true;
+  const correctionChannel = normalizeAiMetadataText(correction.channel).toLowerCase();
+  const videoChannel = normalizeAiMetadataText(video.channel).toLowerCase();
+  return Boolean(correctionChannel && videoChannel && correctionChannel === videoChannel);
+}
+
+function applyUserDecision(video, filterRule, settings, feedback) {
+  const corrections = Array.isArray(feedback?.items) ? feedback.items : [];
+  const correction = corrections.find((item) => correctionMatches(video, filterRule, item));
+  if (correction?.action === "show") {
+    return buildDecision(true, 1, "User restored a similar hidden video.", "feedback");
+  }
+  if (correction?.action === "hide") {
+    return buildDecision(false, 1, "User hid a similar video.", "feedback");
+  }
+
+  const allowChannel = channelMatchesAny(video, parseList(settings.aiAllowChannels));
+  if (allowChannel) {
+    return buildDecision(true, 1, `Allowed channel: ${allowChannel}.`, "override");
+  }
+
+  const allowKeyword = metadataContainsAny(video, parseList(settings.aiAllowKeywords));
+  if (allowKeyword) {
+    return buildDecision(true, 1, `Allowed keyword: ${allowKeyword}.`, "override");
+  }
+
+  const blockChannel = channelMatchesAny(video, parseList(settings.aiBlockChannels));
+  if (blockChannel) {
+    return buildDecision(false, 1, `Blocked channel: ${blockChannel}.`, "override");
+  }
+
+  const blockKeyword = metadataContainsAny(video, parseList(settings.aiBlockKeywords));
+  if (blockKeyword) {
+    return buildDecision(false, 1, `Blocked keyword: ${blockKeyword}.`, "override");
+  }
+
+  return null;
+}
+
+function tokenOverlapScore(video, feedbackItem) {
+  const text = aiMetadataText(video);
+  const tokens = aiMetadataText(feedbackItem).split(/\s+/).filter((token) => token.length >= 4);
+  if (!tokens.length) return 0;
+  let score = 0;
+  for (const token of new Set(tokens)) {
+    if (text.includes(token)) score++;
+  }
+  const sameChannel = normalizeAiMetadataText(video.channel).toLowerCase() &&
+    normalizeAiMetadataText(video.channel).toLowerCase() === normalizeAiMetadataText(feedbackItem.channel).toLowerCase();
+  return score + (sameChannel ? 4 : 0);
+}
+
+function selectFeedbackExamples(videos, filterRule, feedback) {
+  const items = Array.isArray(feedback?.items) ? feedback.items : [];
+  return items
+    .filter((item) => hashString(item.filterRule || "") === hashString(filterRule || ""))
+    .map((item) => ({
+      item,
+      score: Math.max(...videos.map((video) => tokenOverlapScore(video, item)), 0)
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || Number(b.item.timestamp || 0) - Number(a.item.timestamp || 0))
+    .slice(0, AI_FEEDBACK_EXAMPLE_LIMIT)
+    .map(({ item }) => ({
+      action: item.action === "hide" ? "hide" : "show",
+      title: item.title || "",
+      channel: item.channel || "",
+      reason: item.reason || ""
+    }));
+}
+
+async function getAiPreferenceState() {
+  const [syncSettings, localState] = await Promise.all([
+    browser.storage.sync.get(DEFAULT_SYNC_SETTINGS),
+    browser.storage.local.get({ [AI_USER_FEEDBACK_KEY]: [], aiPreferenceVersion: 0 })
+  ]);
+  return {
+    settings: Object.assign({}, DEFAULT_SYNC_SETTINGS, syncSettings || {}),
+    feedback: {
+      version: Number(localState.aiPreferenceVersion) || 0,
+      items: Array.isArray(localState[AI_USER_FEEDBACK_KEY]) ? localState[AI_USER_FEEDBACK_KEY] : []
+    }
+  };
 }
 
 async function handleClassifyVideos(message) {
   const { titles, filterRule } = message;
 
   if (!titles || !titles.length || !hasUsableAiFilterRule(filterRule)) {
-    return { results: {}, error: null };
+    return { results: {}, decisions: {}, error: null };
   }
 
   const videos = titles
@@ -293,30 +456,68 @@ async function handleClassifyVideos(message) {
       id: t.id,
       title: t.title || "",
       channel: t.channel || "",
-      description: t.description || ""
+      description: t.description || "",
+      transcript: t.transcript || ""
     }));
-  const { results: cachedResults, uncachedVideos } = await getCachedResults(videos, filterRule);
+  if (!videos.length) return { results: {}, decisions: {}, error: null };
+
+  const { settings: aiSettings, feedback } = await getAiPreferenceState();
+  const preferenceSignature = getPreferenceSignature(aiSettings, feedback.version);
+  const results = {};
+  const decisions = {};
+  const needsAi = [];
+
+  for (const video of videos) {
+    const userDecision = applyUserDecision(video, filterRule, aiSettings, feedback);
+    if (userDecision) {
+      results[video.id] = userDecision.show;
+      decisions[video.id] = userDecision;
+    } else {
+      needsAi.push(video);
+    }
+  }
+
+  const { results: cachedResults, decisions: cachedDecisions, uncachedVideos } = await getCachedResults(needsAi, filterRule, preferenceSignature);
+  Object.assign(results, cachedResults);
+  Object.assign(decisions, cachedDecisions);
 
   if (uncachedVideos.length === 0) {
-    return { results: cachedResults, error: null };
+    return { results, decisions, error: null };
   }
 
-  const apiResults = await classifyWithBackend(uncachedVideos, filterRule);
+  const preferenceProfile = {
+    hideConfidenceThreshold: normalizeAiThreshold(aiSettings.aiHideConfidenceThreshold),
+    examples: selectFeedbackExamples(uncachedVideos, filterRule, feedback)
+  };
+  const apiResponse = await classifyWithBackend(uncachedVideos, filterRule, preferenceProfile);
 
-  if (apiResults === null) {
+  if (apiResponse === null || apiResponse.results === null) {
     const fallback = {};
-    for (const video of uncachedVideos) fallback[video.id] = true;
-    return { results: Object.assign({}, cachedResults, fallback), error: "api_error" };
+    const fallbackDecisions = {};
+    for (const video of uncachedVideos) {
+      fallback[video.id] = true;
+      fallbackDecisions[video.id] = buildDecision(true, 0, "AI classification unavailable.", "fallback");
+    }
+    return {
+      results: Object.assign({}, results, fallback),
+      decisions: Object.assign({}, decisions, fallbackDecisions),
+      error: "api_error"
+    };
   }
 
-  await cacheResults(apiResults, uncachedVideos, filterRule);
-  return { results: Object.assign({}, cachedResults, apiResults), error: null };
+  await cacheResults(apiResponse.results, apiResponse.decisions, uncachedVideos, filterRule, preferenceSignature);
+  return {
+    results: Object.assign({}, results, apiResponse.results),
+    decisions: Object.assign({}, decisions, apiResponse.decisions),
+    error: null
+  };
 }
 
 async function handleClearCache() {
   const allStorage = await browser.storage.local.get(null);
   const cacheKeys = Object.keys(allStorage).filter(
     (key) => key.startsWith(CACHE_PREFIX) ||
+      key.startsWith(METADATA_CACHE_PREFIX) ||
       key.startsWith(PREVIOUS_CACHE_PREFIX) ||
       key.startsWith(LEGACY_CACHE_PREFIX) ||
       key.startsWith(SPONSOR_CACHE_PREFIX) ||
@@ -448,6 +649,10 @@ function normalizeFilteredVideo(item, timestamp) {
     id,
     title,
     channel: String(item?.channel || "").trim(),
+    description: String(item?.description || "").trim(),
+    transcript: String(item?.transcript || "").trim(),
+    confidence: Math.max(0, Math.min(1, Number(item?.confidence) || 0)),
+    reason: String(item?.reason || "").trim(),
     url: `https://www.youtube.com/watch?v=${id}`,
     filterRule: String(item?.filterRule || "").trim(),
     timestamp
@@ -477,6 +682,50 @@ async function recordAiFilteredVideos(videos, filterRule) {
 
   await browser.storage.local.set({ [AI_FILTERED_VIDEOS_KEY]: merged });
   return { success: true, count: nextItems.length };
+}
+
+function normalizeFeedbackItem(item, timestamp) {
+  const id = String(item?.id || "").trim();
+  const title = String(item?.title || "").trim();
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(id) || !title) return null;
+  return {
+    id,
+    title,
+    channel: String(item?.channel || "").trim(),
+    description: String(item?.description || "").trim(),
+    transcript: String(item?.transcript || "").trim(),
+    filterRule: String(item?.filterRule || "").trim(),
+    action: item?.action === "hide" ? "hide" : "show",
+    reason: String(item?.reason || "").trim(),
+    timestamp
+  };
+}
+
+async function recordAiFeedback(item) {
+  const timestamp = Date.now();
+  const nextItem = normalizeFeedbackItem(item, timestamp);
+  if (!nextItem) return { success: false, error: "invalid_feedback" };
+
+  const state = await browser.storage.local.get({ [AI_USER_FEEDBACK_KEY]: [], aiPreferenceVersion: 0 });
+  const previous = Array.isArray(state[AI_USER_FEEDBACK_KEY]) ? state[AI_USER_FEEDBACK_KEY] : [];
+  const seen = new Set();
+  const merged = [];
+
+  for (const entry of [nextItem, ...previous]) {
+    const key = `${entry.action}:${hashString(entry.filterRule)}:${entry.id}:${entry.channel.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(entry);
+    if (merged.length >= AI_USER_FEEDBACK_LIMIT) break;
+  }
+
+  const aiPreferenceVersion = (Number(state.aiPreferenceVersion) || 0) + 1;
+  await browser.storage.local.set({
+    [AI_USER_FEEDBACK_KEY]: merged,
+    aiPreferenceVersion
+  });
+
+  return { success: true, count: merged.length, aiPreferenceVersion };
 }
 
 async function getStats() {
@@ -584,6 +833,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "RECORD_AI_FILTERED_VIDEOS") {
     recordAiFilteredVideos(message.videos, message.filterRule)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "RECORD_AI_FEEDBACK") {
+    recordAiFeedback(message.feedback)
       .then((result) => sendResponse(result))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;

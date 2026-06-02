@@ -73,6 +73,11 @@ const DEFAULT_SETTINGS = {
   dislikeCountEnabled: false,
   filterEnabled: false,
   aiFilterRule: "",
+  aiAllowChannels: "",
+  aiBlockChannels: "",
+  aiAllowKeywords: "",
+  aiBlockKeywords: "",
+  aiHideConfidenceThreshold: 0.75,
   sponsorBlockEnabled: false,
   sponsorSkipMode: "auto",
   scheduleEnabled: false,
@@ -140,6 +145,11 @@ const learningStackEnabled = document.getElementById("learningStackEnabled");
 const aiFilterRule = document.getElementById("aiFilterRule");
 const aiFilterRuleHint = document.getElementById("aiFilterRuleHint");
 const aiFilterHistory = document.getElementById("aiFilterHistory");
+const aiHideConfidenceThreshold = document.getElementById("aiHideConfidenceThreshold");
+const aiAllowChannels = document.getElementById("aiAllowChannels");
+const aiBlockChannels = document.getElementById("aiBlockChannels");
+const aiAllowKeywords = document.getElementById("aiAllowKeywords");
+const aiBlockKeywords = document.getElementById("aiBlockKeywords");
 const sponsorBlockEnabled = document.getElementById("sponsorBlockEnabled");
 const sponsorSkipMode = document.getElementById("sponsorSkipMode");
 const scheduleEnabled = document.getElementById("scheduleEnabled");
@@ -277,6 +287,12 @@ function countWords(value) {
 
 function hasUsableAiFilterRule(value) {
   return countWords(value) >= AI_FILTER_MIN_WORDS;
+}
+
+function normalizeAiThreshold(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return DEFAULT_SETTINGS.aiHideConfidenceThreshold;
+  return Math.max(0.5, Math.min(0.95, number));
 }
 
 function normalizeAiFilterRuleHistory(history) {
@@ -435,6 +451,11 @@ function setControls(settings) {
   learningStackEnabled.checked = Boolean(currentSettings.learningStackEnabled);
 
   aiFilterRule.value = currentSettings.aiFilterRule || currentSettings.keywords || "";
+  aiHideConfidenceThreshold.value = normalizeAiThreshold(currentSettings.aiHideConfidenceThreshold).toFixed(2);
+  aiAllowChannels.value = currentSettings.aiAllowChannels || "";
+  aiBlockChannels.value = currentSettings.aiBlockChannels || "";
+  aiAllowKeywords.value = currentSettings.aiAllowKeywords || "";
+  aiBlockKeywords.value = currentSettings.aiBlockKeywords || "";
   updateAiFilterRuleHint();
   sponsorBlockEnabled.checked = Boolean(currentSettings.sponsorBlockEnabled);
   sponsorSkipMode.value = currentSettings.sponsorSkipMode || "auto";
@@ -493,6 +514,11 @@ function collectSettings() {
     filterEnabled: hasUsableAiFilterRule(rule),
     aiFilterRule: hasUsableAiFilterRule(rule) ? rule : "",
     keywords: hasUsableAiFilterRule(rule) ? rule : "",
+    aiAllowChannels: aiAllowChannels.value.trim(),
+    aiBlockChannels: aiBlockChannels.value.trim(),
+    aiAllowKeywords: aiAllowKeywords.value.trim(),
+    aiBlockKeywords: aiBlockKeywords.value.trim(),
+    aiHideConfidenceThreshold: normalizeAiThreshold(aiHideConfidenceThreshold.value),
     sponsorBlockEnabled: sponsorBlockEnabled.checked,
     sponsorSkipMode: sponsorSkipMode.value === "ask" ? "ask" : "auto",
     scheduleEnabled: scheduleEnabled.checked,
@@ -640,6 +666,28 @@ function formatFilteredVideoTime(timestamp) {
   });
 }
 
+async function recordFilteredVideoFeedback(video, action) {
+  const response = await browser.runtime.sendMessage({
+    type: "RECORD_AI_FEEDBACK",
+    feedback: {
+      id: video.id,
+      title: video.title,
+      channel: video.channel || "",
+      description: video.description || "",
+      transcript: video.transcript || "",
+      filterRule: video.filterRule || "",
+      action,
+      reason: action === "show" ? "User marked this as a false positive." : "User confirmed this should be hidden."
+    }
+  });
+  if (response?.success) {
+    setMessage(action === "show" ? "Correction saved. Similar videos will be shown." : "Correction saved.", "success");
+    setTimeout(() => setMessage(""), 1800);
+  } else {
+    setMessage("Could not save correction.", "error");
+  }
+}
+
 function renderAiFilteredVideos(videos) {
   if (!aiFilteredVideoList) return;
   aiFilteredVideoList.replaceChildren();
@@ -666,10 +714,20 @@ function renderAiFilteredVideos(videos) {
     meta.className = "filtered-video-meta";
     const time = formatFilteredVideoTime(video.timestamp);
     const channel = String(video.channel || "").trim();
+    const confidence = Number(video.confidence) > 0 ? `Confidence: ${Math.round(Number(video.confidence) * 100)}%` : "";
+    const reason = String(video.reason || "").trim();
     const rule = String(video.filterRule || "").trim();
-    meta.textContent = [time, channel, rule ? `Rule: ${rule}` : ""].filter(Boolean).join(" · ");
+    meta.textContent = [time, channel, confidence, reason, rule ? `Rule: ${rule}` : ""].filter(Boolean).join(" · ");
 
-    item.append(link, meta);
+    const actions = document.createElement("div");
+    actions.className = "filtered-video-actions";
+    const showButton = document.createElement("button");
+    showButton.type = "button";
+    showButton.textContent = "Show next time";
+    showButton.addEventListener("click", () => recordFilteredVideoFeedback(video, "show"));
+    actions.appendChild(showButton);
+
+    item.append(link, meta, actions);
     aiFilteredVideoList.appendChild(item);
   });
 }

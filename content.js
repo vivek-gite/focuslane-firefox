@@ -73,6 +73,11 @@ const DEFAULT_SETTINGS = {
   dislikeCountEnabled: false,
   filterEnabled: false,
   aiFilterRule: "",
+  aiAllowChannels: "",
+  aiBlockChannels: "",
+  aiAllowKeywords: "",
+  aiBlockKeywords: "",
+  aiHideConfidenceThreshold: 0.75,
   sponsorBlockEnabled: false,
   sponsorSkipMode: "auto",
   scheduleEnabled: false,
@@ -93,7 +98,8 @@ const DEFAULT_RUNTIME_STATE = {
   learningSessionActive: false,
   learningSessionFindMore: false,
   learningSessionQueue: [],
-  learningSessionCurrentId: ""
+  learningSessionCurrentId: "",
+  aiPreferenceVersion: 0
 };
 
 const AI_FILTER_MIN_WORDS = 1;
@@ -236,7 +242,15 @@ function sendStats(delta) {
 function rememberAiFilteredVideos(videos, filterRule) {
   const payload = (Array.isArray(videos) ? videos : [])
     .filter((video) => video?.id && video?.title)
-    .map((video) => ({ id: video.id, title: video.title, channel: video.channel || "" }));
+    .map((video) => ({
+      id: video.id,
+      title: video.title,
+      channel: video.channel || "",
+      description: video.description || "",
+      transcript: video.transcript || "",
+      confidence: Number(video.confidence) || 0,
+      reason: video.reason || ""
+    }));
   if (!payload.length) return;
   browser.runtime.sendMessage({
     type: "RECORD_AI_FILTERED_VIDEOS",
@@ -774,6 +788,22 @@ function extractDescription(el) {
   return "";
 }
 
+function extractTranscript(el) {
+  const selectors = [
+    "ytd-transcript-segment-renderer",
+    ".segment-text",
+    "yt-formatted-string.segment-text"
+  ];
+  const parts = [];
+  for (const selector of selectors) {
+    el.querySelectorAll(selector).forEach((transcriptEl) => {
+      const text = normalizeAiMetadataText(transcriptEl.textContent || "");
+      if (text) parts.push(text);
+    });
+  }
+  return parts.join(" ").slice(0, 800);
+}
+
 function getLearningQueue() {
   return Array.isArray(runtimeState.learningSessionQueue) ? runtimeState.learningSessionQueue : [];
 }
@@ -1100,7 +1130,8 @@ function getAiCacheKey(video, filterRule) {
   const metadataHash = typeof video === "string" ? "" : hashString([
     normalizeAiMetadataText(video?.title),
     normalizeAiMetadataText(video?.channel),
-    normalizeAiMetadataText(video?.description)
+    normalizeAiMetadataText(video?.description),
+    normalizeAiMetadataText(video?.transcript)
   ].join("\n"));
   return `${hashString(filterRule)}:${id}:${metadataHash}`;
 }
@@ -1116,7 +1147,13 @@ function applyAiFilter(effective) {
 
   const signature = JSON.stringify({
     active,
-    ruleHash
+    ruleHash,
+    allowChannels: effective.aiAllowChannels || "",
+    blockChannels: effective.aiBlockChannels || "",
+    allowKeywords: effective.aiAllowKeywords || "",
+    blockKeywords: effective.aiBlockKeywords || "",
+    threshold: Number(effective.aiHideConfidenceThreshold) || 0.75,
+    preferenceVersion: Number(runtimeState.aiPreferenceVersion) || 0
   });
 
   if (!active) {
@@ -1149,6 +1186,7 @@ function applyAiFilter(effective) {
       title,
       channel: extractChannel(el),
       description: extractDescription(el),
+      transcript: extractTranscript(el),
       element: el
     };
 
@@ -1171,7 +1209,7 @@ function applyAiFilter(effective) {
   if (!unclassified.length) return;
 
   if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
-  aiDebounceTimer = setTimeout(() => classifyBatch(unclassified, rule), 350);
+  aiDebounceTimer = setTimeout(() => classifyBatch(unclassified, rule), 900);
 }
 
 async function classifyBatch(videos, filterRule) {
@@ -1187,7 +1225,8 @@ async function classifyBatch(videos, filterRule) {
             id: video.id,
             title: video.title,
             channel: video.channel || "",
-            description: video.description || ""
+            description: video.description || "",
+            transcript: video.transcript || ""
           })),
           filterRule
         });
@@ -1196,11 +1235,15 @@ async function classifyBatch(videos, filterRule) {
         let count = 0;
         const filteredVideos = [];
         for (const item of batch) {
+          const decision = response.decisions?.[item.id] || {};
           const relevant = response.results[item.id] === true;
           classifiedVideos.set(getAiCacheKey(item, filterRule), relevant);
           if (!relevant && item.element.isConnected && setHidden(item.element, "ai-filter", true)) {
             count++;
-            filteredVideos.push(item);
+            filteredVideos.push(Object.assign({}, item, {
+              confidence: Number(decision.confidence) || 0,
+              reason: decision.reason || ""
+            }));
           }
         }
         if (count > 0) {
@@ -3174,8 +3217,17 @@ browser.storage.onChanged.addListener((changes, area) => {
       if (key in DEFAULT_SETTINGS) settings[key] = change.newValue;
       if (key === "keywords" && !settings.aiFilterRule) settings.aiFilterRule = change.newValue || "";
     }
-    if (changes.aiFilterRule || changes.filterEnabled) {
+    if (
+      changes.aiFilterRule ||
+      changes.filterEnabled ||
+      changes.aiAllowChannels ||
+      changes.aiBlockChannels ||
+      changes.aiAllowKeywords ||
+      changes.aiBlockKeywords ||
+      changes.aiHideConfidenceThreshold
+    ) {
       classifiedVideos.clear();
+      clearReason("ai-filter");
     }
     scheduleApply(120, true);
   }
@@ -3183,6 +3235,10 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === "local") {
     for (const [key, change] of Object.entries(changes)) {
       if (key in DEFAULT_RUNTIME_STATE) runtimeState[key] = change.newValue;
+    }
+    if (changes.aiPreferenceVersion) {
+      classifiedVideos.clear();
+      clearReason("ai-filter");
     }
     scheduleApply(120, true);
   }
