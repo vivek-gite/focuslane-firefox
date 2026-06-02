@@ -717,7 +717,6 @@ async function recordFilteredVideoFeedback(video, action) {
       title: video.title,
       channel: video.channel || "",
       description: video.description || "",
-      transcript: video.transcript || "",
       filterRule: video.filterRule || "",
       action,
       reason: action === "show" ? "User marked this as a false positive." : "User confirmed this should be hidden."

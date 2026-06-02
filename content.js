@@ -247,7 +247,6 @@ function rememberAiFilteredVideos(videos, filterRule) {
       title: video.title,
       channel: video.channel || "",
       description: video.description || "",
-      transcript: video.transcript || "",
       confidence: Number(video.confidence) || 0,
       reason: video.reason || ""
     }));
@@ -799,22 +798,6 @@ function extractDescription(el) {
   return "";
 }
 
-function extractTranscript(el) {
-  const selectors = [
-    "ytd-transcript-segment-renderer",
-    ".segment-text",
-    "yt-formatted-string.segment-text"
-  ];
-  const parts = [];
-  for (const selector of selectors) {
-    el.querySelectorAll(selector).forEach((transcriptEl) => {
-      const text = normalizeAiMetadataText(transcriptEl.textContent || "");
-      if (text) parts.push(text);
-    });
-  }
-  return parts.join(" ").slice(0, 800);
-}
-
 function getLearningQueue() {
   return Array.isArray(runtimeState.learningSessionQueue) ? runtimeState.learningSessionQueue : [];
 }
@@ -1141,8 +1124,7 @@ function getAiCacheKey(video, filterRule) {
   const metadataHash = typeof video === "string" ? "" : hashString([
     normalizeAiMetadataText(video?.title),
     normalizeAiMetadataText(video?.channel),
-    normalizeAiMetadataText(video?.description),
-    normalizeAiMetadataText(video?.transcript)
+    normalizeAiMetadataText(video?.description)
   ].join("\n"));
   return `${hashString(filterRule)}:${id}:${metadataHash}`;
 }
@@ -1197,7 +1179,6 @@ function applyAiFilter(effective) {
       title,
       channel: extractChannel(el),
       description: extractDescription(el),
-      transcript: extractTranscript(el),
       element: el
     };
 
@@ -1236,8 +1217,7 @@ async function classifyBatch(videos, filterRule) {
             id: video.id,
             title: video.title,
             channel: video.channel || "",
-            description: video.description || "",
-            transcript: video.transcript || ""
+            description: video.description || ""
           })),
           filterRule
         });
